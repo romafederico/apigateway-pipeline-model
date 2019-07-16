@@ -1,0 +1,18 @@
+version: 0.2
+phases:
+  install:
+    commands:
+      - cd lambda; for function in *; do if [ -d $function ]; then cd $function; zip -rq index.zip .; cd ..; fi; done; cd ..
+      - aws cloudformation package --template-file lambda/template.yml --s3-bucket ${PIPELINE_BUCKET} --output-template-file output-lambda-template.yml --debug
+      - aws s3 rm s3://${ARTIFACT_BUCKET}/oas/ --recursive --exclude "*" --include "v*-${STAGE}*.yml"
+      - cd api; ls; sed -i "s/{{ timestamp }}/$(date +"%Y%m%dx%H%M%S")/g" template.yml; mv v1.yml v1-${STAGE}-$(date +"%Y%m%dx%H%M%S").yml; sed -i "s/{{ stage }}/${STAGE}/g" v1-${STAGE}-$(date +"%Y%m%dx%H%M%S").yml; cd .. # TODO: remove hardcoded OAS v1.yml file
+      - aws s3 cp api s3://${ARTIFACT_BUCKET}/oas/ --recursive --exclude "*" --include "v*-${STAGE}*.yml"
+artifacts:
+  type: zip
+  files:
+    - config/testing_parameters.json
+    - config/staging_parameters.json
+    - api/template.yml
+    - auth/template.yml
+    - storage/template.yml
+    - output-lambda-template.yml

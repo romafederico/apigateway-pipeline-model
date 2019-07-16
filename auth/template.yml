@@ -1,0 +1,205 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  BaseName:
+    Type: String
+  StageName:
+    Type: String
+  HostedZoneId:
+    Type: String
+  HostedZoneDomain:
+    Type: String
+  ApiHostedZoneId:
+    Type: String
+  APICertificateArn:
+    Type: String
+  FacebookAppId:
+    Type: String
+  FacebookAppSecret:
+    Type: String
+
+Resources:
+  UserPool:
+    Type: "AWS::Cognito::UserPool"
+    Properties:
+      AliasAttributes:
+        - preferred_username
+        - email
+      AutoVerifiedAttributes:
+        - email
+      LambdaConfig:
+        PreSignUp: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-validate-new-account
+        PostConfirmation: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-create-user-profile
+        CustomMessage: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-send-verification-link
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 6
+          RequireLowercase: false
+          RequireNumbers: false
+          RequireSymbols: false
+          RequireUppercase: false
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+      UserPoolName: !Sub ${BaseName}-${StageName}-user-pool
+
+
+  UserPoolClient:
+    Type: "AWS::Cognito::UserPoolClient"
+    Properties:
+      ClientName: !Sub ${BaseName}-${StageName}-web-client
+      GenerateSecret: false
+      UserPoolId: !Ref UserPool
+
+  AuthExtendedResources:
+    DependsOn:
+      - UserPoolClient
+      - UserPool
+      - IdentityPool
+      - CognitoUnAuthorizedRole
+      - CognitoAuthorizedRole
+      - IdentityPoolRoleMapping
+    Type: 'Custom::AuthExtendedResources'
+    Properties:
+      FunctionName: !Sub ${BaseName}-${StageName}-extend-auth
+      ServiceToken: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-extend-auth
+      # User Pool Client Settings
+      SupportedIdentityProviders:
+        - COGNITO
+        - Facebook
+      BaseName: !Ref BaseName
+      UserPoolId: !Ref UserPool
+      UserPoolClientId: !Ref UserPoolClient
+      ExplicitAuthFlows:
+        - USER_PASSWORD_AUTH
+      CallbackURL:
+       - !Sub https://${StageName}.app.${BaseName}.com/signin_success
+      LogoutURL:
+       - !Sub https://${StageName}.app.${BaseName}.com/signout_success
+      AllowedOAuthFlowsUserPoolClient: True
+      AllowedOAuthFlows:
+        - code
+        - implicit
+      AllowedOAuthScopes:
+        - openid
+        - email
+      # User Pool Domainw
+      Domain: !Sub ${BaseName}-${StageName}
+      # Facebook Provider
+      StageName: !Ref StageName
+      ProviderName: 'Facebook'
+      FacebookAppId: !Ref FacebookAppId
+      FacebookAppSecret: !Ref FacebookAppSecret
+      ProjectRegion: !Ref AWS::Region
+      AccountId: !Ref AWS::AccountId
+      UpdateDummy: 1
+
+  IdentityPool:
+    Type: "AWS::Cognito::IdentityPool"
+    Properties:
+      IdentityPoolName: !Sub ${BaseName}${StageName}IdentityPool
+      AllowUnauthenticatedIdentities: true
+      CognitoIdentityProviders:
+        -
+          ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+        -
+          ClientId: !Ref UserPoolClient
+          ProviderName: !GetAtt UserPool.ProviderName
+      SupportedLoginProviders:
+        graph.facebook.com: !Ref FacebookAppId
+
+  CognitoUnAuthorizedRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": unauthenticated
+      Policies:
+        - PolicyName: "CognitoUnauthorizedPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-idp:*"
+                Resource: "*"
+
+  CognitoAuthorizedRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Federated: "cognito-identity.amazonaws.com"
+            Action:
+              - "sts:AssumeRoleWithWebIdentity"
+            Condition:
+              StringEquals:
+                "cognito-identity.amazonaws.com:aud": !Ref IdentityPool
+              "ForAnyValue:StringLike":
+                "cognito-identity.amazonaws.com:amr": authenticated
+      Policies:
+        - PolicyName: "CognitoAuthorizedPolicy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "mobileanalytics:PutEvents"
+                  - "cognito-sync:*"
+                  - "cognito-identity:*"
+                  - "cognito-idp:*"
+                Resource: "*"
+              - Effect: "Allow"
+                Action:
+                  - "lambda:InvokeFunction"
+                Resource: "*"
+
+  IdentityPoolRoleMapping:
+    Type: "AWS::Cognito::IdentityPoolRoleAttachment"
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        authenticated: !GetAtt CognitoAuthorizedRole.Arn
+        unauthenticated: !GetAtt CognitoUnAuthorizedRole.Arn
+
+  ValidateNewAccountPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-validate-new-account
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  CreateUserProfilePermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-create-user-profile
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  SendVerificationLinkPermissions:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${BaseName}-${StageName}-send-verification-link
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn

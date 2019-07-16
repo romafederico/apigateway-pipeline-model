@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  BaseName:
+    Type: String
+    Description: Project Base Name - Used to assign names across resources
+  StageName:
+    Type: String
+    Description: Project Stage Name - Used to separate resources in different stages
+  HostedZoneId:
+    Type: String
+  HostedZoneDomain:
+    Type: String
+  ApiHostedZoneId:
+    Type: String
+  APICertificateArn:
+    Type: String
+  FacebookAppId:
+    Type: String
+  FacebookAppSecret:
+    Type: String
+
+Conditions:
+  StageEqualsProduction: !Equals [!Ref StageName, production]
+
+Resources:
+  ContentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${BaseName}-${StageName}-${AWS::Region}-content
+      VersioningConfiguration:
+        Status: Enabled
+
+  CoverBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${BaseName}-${StageName}-${AWS::Region}-cover
+      VersioningConfiguration:
+        Status: Enabled
+
+  AvatarBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ${BaseName}-${StageName}-${AWS::Region}-avatar
+      VersioningConfiguration:
+        Status: Enabled
+
+  UserProfileTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${BaseName}-${StageName}-user-profile
+      AttributeDefinitions:
+        - AttributeName: "user_id"
+          AttributeType: "S"
+        - AttributeName: "username"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "user_id"
+          KeyType: "HASH"
+      GlobalSecondaryIndexes:
+        - IndexName: "username-index"
+          KeySchema:
+            - AttributeName: "username"
+              KeyType: "HASH"
+          Projection:
+            ProjectionType: "ALL"
+          ProvisionedThroughput:
+            ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+            WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+      ProvisionedThroughput:
+        ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+        WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+
+  StoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${BaseName}-${StageName}-story
+      AttributeDefinitions:
+        - AttributeName: "story_id"
+          AttributeType: "S"
+        - AttributeName: "user_id"
+          AttributeType: "S"
+        - AttributeName: "created_at"
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: "story_id"
+          KeyType: "HASH"
+        - AttributeName: "created_at"
+          KeyType: "RANGE"
+      GlobalSecondaryIndexes:
+        - IndexName: "user_id-index"
+          KeySchema:
+            - AttributeName: "user_id"
+              KeyType: "HASH"
+          Projection:
+            ProjectionType: "ALL"
+          ProvisionedThroughput:
+            ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+            WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+      ProvisionedThroughput:
+        ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+        WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+
+  ChapterTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${BaseName}-${StageName}-chapter
+      AttributeDefinitions:
+        - AttributeName: "chapter_id"
+          AttributeType: "S"
+        - AttributeName: "story_id"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "chapter_id"
+          KeyType: "HASH"
+      GlobalSecondaryIndexes:
+        - IndexName: "story_id-index"
+          KeySchema:
+            - AttributeName: "story_id"
+              KeyType: "HASH"
+          Projection:
+            ProjectionType: "ALL"
+          ProvisionedThroughput:
+            ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+            WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+      ProvisionedThroughput:
+        ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+        WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+
+  CountryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${BaseName}-${StageName}-country
+      AttributeDefinitions:
+        - AttributeName: "code"
+          AttributeType: "S"
+        - AttributeName: "name"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "code"
+          KeyType: "HASH"
+        - AttributeName: "name"
+          KeyType: "RANGE"
+      ProvisionedThroughput:
+        ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+        WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+
+  MigrationTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub ${BaseName}-${StageName}-migration
+      AttributeDefinitions:
+        - AttributeName: "key"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "key"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: !If [StageEqualsProduction, "5", "1"]
+        WriteCapacityUnits: !If [StageEqualsProduction, "5", "1"]

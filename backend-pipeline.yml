@@ -1,0 +1,430 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Parameters:
+  PipelineName:
+    Default: bukium-backend-pipeline
+    Type: String
+  GithubPersonalToken:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: github-romafederico-personal-token
+
+Mappings:
+  StageMap:
+    Testing:
+      Name: testing
+      DeployBucket: testing.app.bukium.com
+    Staging:
+      Name: staging
+      DeployBucket: staging.app.bukium.com
+    Production:
+      Name: production
+      DeployBucket: production.app.bukium.com
+
+Resources:
+  PipelineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bukium-backend-pipeline-${AWS::Region}
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub bukium-backend-artifacts-${AWS::Region}
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub bukium-codebuild-role-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - codebuild.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /service-role/
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt PipelineBucket.Arn
+                  - !Join ["", [!GetAtt PipelineBucket.Arn, /*]]
+              -
+                Effect: Allow
+                Action:
+                  - s3:*
+                Resource:
+                  - !GetAtt PipelineBucket.Arn
+                  - !Join ['', [!GetAtt PipelineBucket.Arn, /*]]
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Join ['', [!GetAtt ArtifactBucket.Arn, /*]]
+              -
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - cloudfront:CreateInvalidation
+                Resource:
+                  - "*"
+
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub bukium-cloudformation-role-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+      Policies:
+        -
+          PolicyName: CloudFormationNestedCFNAccessPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              -
+                Effect: Allow
+                Action:
+                  - apigateway:*
+                  - cloudfront:*
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeChangeSet
+                  - cognito-idp:*
+                  - cognito-identity:*
+                  - dynamodb:*
+                  - iam:AttachRolePolicy
+                  - iam:CreateRole
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:PutRolePolicy
+                  - iam:UpdateAssumeRolePolicy
+                  - lambda:AddPermission
+                  - Lambda:RemovePermission
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:GetFunctionConfiguration
+                  - lambda:InvokeFunction
+                  - lambda:ListTags
+                  - lambda:TagResource
+                  - lambda:UnTagResource
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - route53:*
+                  - route53domains:*
+                  - s3:GetObject
+                  - s3:CreateBucket
+                  - s3:DeleteBucket
+                  - s3:PutBucketVersioning
+                Resource: "*"
+
+  CodePipeLineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub bukium-codepipeline-role-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          -
+            Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt PipelineBucket.Arn
+                  - !Join ["", [!GetAtt PipelineBucket.Arn, /*]]
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:UpdateStack
+                  - iam:PassRole
+                Resource: "*"
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Location: !Ref PipelineBucket
+        Type: S3
+      Name: !Ref PipelineName
+      RoleArn: !GetAtt CodePipeLineRole.Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Provider: GitHub
+                Version: 1
+              Configuration:
+                Owner: romafederico
+                Branch: master
+                Repo: bukium-backend
+                OAuthToken: !Ref GithubPersonalToken
+              OutputArtifacts:
+                - Name: bukium-backend-source
+        - Name: Testing
+          Actions:
+            - Name: Package
+              RunOrder: 1
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: bukium-backend-source
+              OutputArtifacts:
+                - Name: bukium-backend-testing-build
+              Configuration:
+                ProjectName: !Ref TestingBuild
+            - Name: DeployLambda
+              RunOrder: 2
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-testing-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployLambda
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackName: bukium-testing-lambda
+                TemplatePath: bukium-backend-testing-build::output-lambda-template.yml
+                TemplateConfiguration: bukium-backend-testing-build::config/testing_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+            - Name: DeployStorage
+              RunOrder: 3
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-testing-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployStorage
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+                StackName: bukium-testing-storage
+                TemplatePath: bukium-backend-testing-build::storage/template.yml
+                TemplateConfiguration: bukium-backend-testing-build::config/testing_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+            - Name: DeployAuth
+              RunOrder: 3
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-testing-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployAuth
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                StackName: bukium-testing-auth
+                TemplatePath: bukium-backend-testing-build::auth/template.yml
+                TemplateConfiguration: bukium-backend-testing-build::config/testing_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+            - Name: DeployAPI
+              RunOrder: 3
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-testing-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployAPI
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                StackName: bukium-testing-api
+                TemplatePath: bukium-backend-testing-build::api/template.yml
+                TemplateConfiguration: bukium-backend-testing-build::config/testing_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+        - Name: Staging
+          Actions:
+            - Name: ApproveTestStack
+              RunOrder: 1
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: 1
+              Configuration:
+                CustomData: Do you want to promote TESTING to STAGING?
+            - Name: Package
+              RunOrder: 2
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: 1
+                Provider: CodeBuild
+              InputArtifacts:
+                - Name: bukium-backend-source
+              OutputArtifacts:
+                - Name: bukium-backend-staging-build
+              Configuration:
+                ProjectName: !Ref StagingBuild
+            - Name: DeployLambda
+              RunOrder: 3
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-staging-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployLambda
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND,CAPABILITY_NAMED_IAM
+                StackName: bukium-staging-lambda
+                TemplatePath: bukium-backend-staging-build::output-lambda-template.yml
+                TemplateConfiguration: bukium-backend-staging-build::config/staging_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+            - Name: DeployStorage
+              RunOrder: 4
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-staging-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployStorage
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+                StackName: bukium-staging-storage
+                TemplatePath: bukium-backend-staging-build::storage/template.yml
+                TemplateConfiguration: bukium-backend-staging-build::config/staging_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+            - Name: DeployAuth
+              RunOrder: 4
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-staging-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployAuth
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                StackName: bukium-staging-auth
+                TemplatePath: bukium-backend-staging-build::auth/template.yml
+                TemplateConfiguration: bukium-backend-staging-build::config/staging_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+            - Name: DeployAPI
+              RunOrder: 4
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              InputArtifacts:
+                - Name: bukium-backend-staging-build
+              Configuration:
+                ActionMode: REPLACE_ON_FAILURE
+                ChangeSetName: DeployAPI
+                Capabilities: CAPABILITY_IAM,CAPABILITY_NAMED_IAM
+                StackName: bukium-staging-api
+                TemplatePath: bukium-backend-staging-build::api/template.yml
+                TemplateConfiguration: bukium-backend-staging-build::config/staging_parameters.json
+                RoleArn: !GetAtt CloudFormationRole.Arn
+
+  TestingBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub bukium-backend-testing-build
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+        Name: bukium-backend
+      Source:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: STAGE
+            Value: !FindInMap [ StageMap, Testing, Name]
+          - Name: PIPELINE_BUCKET
+            Value: !Ref PipelineBucket
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+        Image: aws/codebuild/ubuntu-base:14.04
+        Type: LINUX_CONTAINER
+
+  StagingBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub bukium-backend-staging-build
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+        Name: bukium-backend
+      Source:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: STAGE
+            Value: !FindInMap [ StageMap, Staging, Name]
+          - Name: PIPELINE_BUCKET
+            Value: !Ref PipelineBucket
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+        Image: aws/codebuild/ubuntu-base:14.04
+        Type: LINUX_CONTAINER

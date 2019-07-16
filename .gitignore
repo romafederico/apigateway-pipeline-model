@@ -1,0 +1,10 @@
+infrastructure.zip
+.idea/
+
+# misc
+.DS_Store
+
+**/node_modules
+**/generate-*.zip
+**/send-report-email.zip
+**/package-lock.json
