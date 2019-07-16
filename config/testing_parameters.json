@@ -6,8 +6,8 @@
         "HostedZoneId": "Z1QUIAXEFGJWWK",
         "HostedZoneDomain": "app.bukium.com",
         "APICertificateArn": "arn:aws:acm:us-east-1:954296845801:certificate/3e227214-7a3f-4418-989f-ca7fc219c043",
-        "FacebookAppId": "1236516426517577",
-        "FacebookAppSecret": "81635426482b0bbbebd04dff580bcb62"
+        "FacebookAppId": "$$$$$$$$",
+        "FacebookAppSecret": "$$$$$$$$"
 
     }
 }
